@@ -15,4 +15,5 @@ Using RStudio (v 4.2), I combined the data from seasons 1-8 to create a set of u
 You may use this code as a jumping off point to explore further network analyses, such as assortativity.
 
 [https://github.com/mathbeveridge/gameofthrones](url)
+
 [https://networkofthrones.wordpress.com/](url)
