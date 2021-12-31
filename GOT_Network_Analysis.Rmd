@@ -1,0 +1,743 @@
+---
+title: "QBS 122 Social Network Analysis Project"
+author: "Connolly Carroll"
+date: "5/29/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd('/Users/connollycarroll/Desktop/Q3/122')
+```
+
+```{r, results='hide'}
+library(sna)
+library(statnet)
+library(coda)
+library(dplyr)
+library(tidyverse)
+library(latentnet)
+library(amen)
+library(eigenmodel)
+par(mfrow=c(1,1))
+```
+
+Load edges and nodes.
+```{r, results='hide'}
+s1 = read.csv('got_dat/data/got-s1-edges.csv')
+s2 = read.csv('got_dat/data/got-s2-edges.csv')
+s3 = read.csv('got_dat/data/got-s3-edges.csv')
+s4 = read.csv('got_dat/data/got-s4-edges.csv')
+s5 = read.csv('got_dat/data/got-s5-edges.csv')
+s6 = read.csv('got_dat/data/got-s6-edges.csv')
+s7 = read.csv('got_dat/data/got-s7-edges.csv')
+s8 = read.csv('got_dat/data/got-s8-edges.csv')
+
+s1n = read.csv('got_dat/data/got-s1-nodes.csv')
+s2n = read.csv('got_dat/data/got-s2-nodes.csv')
+s3n = read.csv('got_dat/data/got-s3-nodes.csv')
+s4n = read.csv('got_dat/data/got-s4-nodes.csv')
+s5n = read.csv('got_dat/data/got-s5-nodes.csv')
+s6n = read.csv('got_dat/data/got-s6-nodes.csv')
+s7n = read.csv('got_dat/data/got-s7-nodes.csv')
+s8n = read.csv('got_dat/data/got-s8-nodes.csv')
+```
+
+Consolidate all edges into one data frame based on unique pairs of actors, summing interactions. Look for overlap between unique nodes and names in death df, assign status of dead or alive accordingly. Assign house based on parsing ID for last name in ID. Final df: all actor interactions throughout the show, final alive status, house (surname).
+```{r, results='hide'}
+df <- rbind(s1, s2, s3, s4, s5, s6, s7, s8)
+
+df$unique_pair_tag <- rep(NaN, nrow(df))
+
+for (i in 1:nrow(df)){
+  alpha_set <- sort(c(df$Source[i], df$Target[i]))
+  tag_int <- paste(alpha_set[1], alpha_set[2], sep = '')
+  
+  df$unique_pair_tag[i] <- tag_int
+}
+```
+
+Compile unique list of nodes and associated IDs. I have first names with first letter capitalized here.
+```{r, results='hide'}
+nodes_df <- rbind(s1n, s2n, s3n, s4n, s5n, s6n, s7n, s8n)
+nodes_df <- nodes_df[-62, ]
+nodes_df <- distinct(nodes_df, nodes_df$Id, .keep_all = TRUE)
+nodes_df <- select(nodes_df, -3)
+
+for (i in 1:nrow(nodes_df)){
+  if (nodes_df$Id[i] %in% df$Source | nodes_df$Id[i] %in% df$Target){
+  }
+  else{
+    nodes_df <- nodes_df[-i, ]
+  }
+}
+```
+
+Check for reasonable results. All frequencies range between 1 and 8, the number of seasons over which data is compiled.
+```{r, results='hide'}
+aa <- as.data.frame(table(df$unique_pair_tag))
+# (aa)
+# (table(aa$Freq))
+```
+
+Create a table with summed interactions by unique pair tag.
+```{r, results='hide'}
+df_counts <- df %>%
+  group_by(df$unique_pair_tag) %>%
+  summarize_at(vars(Weight), sum, na.rm = TRUE)
+```
+
+Grab data from summed interactions table and add to main df.
+```{r, results='hide'}
+df$final_counts1 <- rep(NaN, nrow(df))
+for (i in 1:nrow(df)){
+  tag_int <- df$unique_pair_tag[i]
+  df$final_counts1[i] <- df_counts[df_counts['df$unique_pair_tag'] == tag_int, 'Weight']
+}
+```
+
+```{r, results='hide'}
+df$final_counts <- rep(NaN, nrow(df))
+for (i in 1:nrow(df)){
+  df$final_counts[i] <- df[i, 'final_counts1'][[1]]
+}
+
+df <- select(df, -6)
+```
+
+Subset for unique pairs of actors with summed interactions.
+```{r, results='hide'}
+edges_df <- distinct(df, df$unique_pair_tag, .keep_all = TRUE)
+edges_df <- select(edges_df, -3, -4, -7)
+edges_df$weight <- edges_df$final_counts/100
+edges_df <- edges_df[, c(1, 2, 5, 3, 4)]
+```
+
+Get first name tags for each actor in the deaths df. Extract first name with first letter capitalized.
+```{r, results='hide'}
+char_det <- read.csv('game_of_thrones_deaths.csv')
+int_df <- select(char_det, name)
+int_df$first_name <- rep(NaN, length(int_df))
+
+for(i in 1:length(int_df$name)){
+  int_df$first_name[i] <- strsplit(int_df$name[i], '\\s+')[[1]][1]}
+```
+
+Add alive or dead attribute. Change a few edge cases manually.
+```{r, results='hide'}
+nodes_df$Dead <- rep(NaN, nrow(nodes_df))
+for (i in 1:nrow(nodes_df)){
+  nodes_df$Dead[i] <- ifelse(nodes_df$Label[i] %in% int_df$first_name, 1, 0)
+}
+
+nodes_df[nodes_df$Label == 'Drogo', 'Dead'] <- 1
+nodes_df[nodes_df$Label == 'Hugh of the Vale', 'Dead'] <- 1
+nodes_df[nodes_df$Label == 'Hot Pie', 'Dead'] <- 1
+nodes_df[nodes_df$Label == 'Khal Moro', 'Dead'] <- 1
+nodes_df[nodes_df$Label == 'Silk King', 'Dead'] <- 1
+nodes_df[nodes_df$Label == 'Spice King', 'Dead'] <- 1
+nodes_df[nodes_df$Label == 'Night King', 'Dead'] <- 1
+nodes_df[nodes_df$Label == 'Tickler', 'Dead'] <- 1
+nodes_df[nodes_df$Label == 'High Septon', 'Dead'] <- 1
+nodes_df[nodes_df$Label == 'High Sparrow', 'Dead'] <- 1
+nodes_df[nodes_df$Label == 'Jon Arryn', 'Dead'] <- 1
+nodes_df[nodes_df$Label == 'Aegon', 'Dead'] <- 1
+nodes_df[nodes_df$Label == 'Rhaegar', 'Dead'] <- 1
+nodes_df[nodes_df$Label == 'Jon', 'Dead'] <- 0
+nodes_df[nodes_df$Label == 'Lyanna Mormont', 'Dead'] <- 1
+nodes_df[nodes_df$Label == 'Theon', 'Dead'] <- 1
+nodes_df[nodes_df$Label == 'Tyene', 'Dead'] <- 1
+```
+
+```{r, results='hide'}
+nodes_df$num_ind <- as.numeric(rownames(nodes_df))
+edges_df$NS <- rep(NaN, nrow(edges_df))
+edges_df$NT <- rep(NaN, nrow(edges_df))
+for(i in 1:nrow(edges_df)){
+  edges_df$NS[i] <- nodes_df[nodes_df$Id == edges_df$Source[i], 'num_ind']
+  edges_df$NT[i] <- nodes_df[nodes_df$Id == edges_df$Target[i], 'num_ind']
+}
+```
+
+```{r, results='hide'}
+mat <- matrix(0, 406, 406)
+for(i in 1:406){
+  mat[edges_df[i, 6], edges_df[i, 7]] <- edges_df[i, 3]
+}
+```
+
+Display data graphically.
+```{r fig1, fig.height = 4, fig.width = 4, fig.align = 'center'}
+library(igraph)
+nodes <- nodes_df$Id
+gnet <- graph_from_data_frame(d = edges_df[, 1:2], vertices = nodes, directed = FALSE)
+E(gnet)$weight <- edges_df$weight
+plot(gnet, layout = layout.random,
+     vertex.label.cex = 0.5,
+     vertex.size = 3,
+     vertex.label.color = 'black',
+     edge.width = E(gnet)$weight,
+     asp = 0)
+```
+
+Compute summary statistics with igraph.
+```{r}
+# (edge_density(gnet))
+# (centr_degree(gnet)$centralization)
+# (transitivity(gnet))
+```
+
+```{r}
+deg1 <- degree(gnet)
+str1 <- strength(gnet, weights = edges_df$weight)
+btwn1 <- betweenness(gnet, weights = edges_df$weight)
+close1 <- closeness(gnet, weights = edges_df$weight)
+eigen1 <- eigen_centrality(gnet, weights = edges_df$weight)$vector
+
+(var(deg1))
+(var(str1))
+(var(btwn1))
+(var(close1))
+(var(eigen1))
+```
+
+Compute summary statistics with sna.
+```{r, results='hide'}
+detach('package:igraph', unload = TRUE)
+```
+
+```{r}
+pnet <- as.network(edges_df[, 1:3],
+                 matrix.type = 'edgelist',
+                 directed = FALSE,
+                 ignore.eval = FALSE,
+                 names.eval = 'weight')
+```
+
+Network: Density, centralization, transitivity (triad census)
+```{r}
+(gden(pnet, mode = 'graph', ignore.eval = FALSE))
+(centralization(pnet, degree, mode = 'graph'))
+(triad.census(pnet, mode = 'graph'))
+(gtrans(pnet, mode = 'graph', measure = 'weak', use.adjacency = TRUE))
+```
+
+Node: degree, strength, closeness, betweenness, eigenvector, variance
+```{r}
+ deg2 <- degree(pnet, gmode = 'graph', cmode = 'undirected')
+# 
+# geo2 <- as.data.frame(geodist(pnet, inf.replace = 0)$gdist)
+# geo2 <- cbind(geo2, means = rowSums(geo2)/405)
+# 
+# btwn2 <- betweenness(pnet, gmode = 'graph', cmode = 'undirected')
+# 
+# eigen2 <- evcent(pnet, gmode = 'graph', use.eigen = FALSE)
+# 
+# close2 <- closeness(plot(pnet))
+# 
+# (var(deg2))
+# (var(geo2$means))
+# (var(btwn2))
+# (var(close2))
+# (var(eigen2))
+```
+
+Choose most central actors to model, subset. Assortativity, don't have mutuality because undirected.
+```{r, results='hide'}
+deg_ls <- as.data.frame(cbind(seq(1, 406, 1), deg2))
+deg_ls <- deg_ls[order(-deg_ls$deg2), ]
+
+nodes_suba <- nodes_df[deg_ls[1:100, 'V1'], ]
+```
+
+```{r, results='hide'}
+str_ls <- as.data.frame(cbind(seq(1, 406, 1),str1))
+str_ls <- str_ls[order(-str_ls$str1), ]
+
+nodes_subb <- nodes_df[str_ls[1:100, 'V1'], ]
+```
+
+```{r}
+(nodes_suba[1:5, 'Id'])
+(nodes_subb[1:5, 'Id'])
+```
+
+```{r, results='hide'}
+nodes_subb$sex <- c(0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0)
+
+nodes_subb$house <- rep('lightorange', 100)
+
+nodes_subb <- nodes_subb[, c(1, 2, 4, 3, 5)]
+
+nodes_subb$lannister <- rep(0, 100)
+lann_mems <- c('Tyrion', 'Cersei', 'Jaime', 'Tywin', 'Lancel')
+lkid <- c('Joffrey', 'Myrcella', 'Tommen')
+lmar <- c('Robert', 'Margaery', 'Sansa')
+nodes_subb[nodes_subb$Label %in% lann_mems, 'house'] <- 'yellow'
+nodes_subb[nodes_subb$Label %in% lann_mems, 'lannister'] <- 1
+nodes_subb[nodes_subb$Label %in% lkid, 'lannister'] <- 2
+nodes_subb[nodes_subb$Label %in% lmar, 'lannister'] <- 3
+
+nodes_subb$targaryen <- rep(0, 100)
+targ_mems <- c('Daenerys', 'Viserys', 'Jon', 'Aemon')
+tmar <- c('Drogo')
+nodes_subb[nodes_subb$Label %in% targ_mems, 'targaryen'] <- 1
+nodes_subb[nodes_subb$Label %in% targ_mems, 'house'] <- 'red'
+nodes_subb[nodes_subb$Label %in% tmar, 'targaryen'] <- 3
+
+nodes_subb$stark <- rep(0, 100)
+stark_mems <- c('Sansa', 'Arya', 'Ned', 'Rickon', 'Robb', 'Benjen', 'Bran')
+skid <- c('Jon')
+smar <- c('Tyrion', 'Talisa', 'Ramsey', 'Catelyn')
+nodes_subb[nodes_subb$Label %in% stark_mems, 'stark'] <- 1
+nodes_subb[nodes_subb$Label %in% stark_mems, 'house'] <- 'blue'
+nodes_subb[nodes_subb$Label %in% skid, 'stark'] <- 2
+nodes_subb[nodes_subb$Label %in% smar, 'stark'] <- 3
+
+nodes_subb$baratheon <- rep(0, 100)
+bar_mems <- c('Joffrey', 'Myrcella', 'Tommen', 'Robert', 'Gendry', 'Renly', 'Stannis', 'Shireen')
+bmar <- c('Cersei', 'Selyse', 'Margaery')
+nodes_subb[nodes_subb$Label %in% bar_mems, 'baratheon'] <- 1
+nodes_subb[nodes_subb$Label %in% bar_mems, 'house'] <- 'orange'
+nodes_subb[nodes_subb$Label %in% bmar, 'baratheon'] <- 3
+
+nodes_subb$tyrell <- rep(0, 100)
+tyr_mems <- c('Margaery', 'Olenna', 'Mace', 'Loras')
+tymar <- c('Renly', 'Jeoffrey', 'Tommen')
+nodes_subb[nodes_subb$Label %in% tyr_mems, 'tyrell'] <- 1
+nodes_subb[nodes_subb$Label %in% tyr_mems, 'house'] <- 'lightgreen'
+nodes_subb[nodes_subb$Label %in% tymar, 'tyrell'] <- 3
+
+nodes_subb$arryn <- rep(0, 100)
+arryn_mems <- c('Robin')
+amar <- c('Lysa', 'Petyr')
+nodes_subb[nodes_subb$Label %in% arryn_mems, 'arryn'] <- 1
+nodes_subb[nodes_subb$Label %in% arryn_mems, 'house'] <- 'lightblue'
+nodes_subb[nodes_subb$Label %in% amar, 'arryn'] <- 3
+
+nodes_subb$greyjoy <- rep(0, 100)
+grey_mems <- c('Balon', 'Euron', 'Rodrik', 'Yara', 'Theon')
+nodes_subb[nodes_subb$Label %in% grey_mems, 'greyjoy'] <- 1
+nodes_subb[nodes_subb$Label %in% grey_mems, 'house'] <- 'grey'
+
+nodes_subb$tully <- rep(0, 100)
+tully_mems <- c('Catelyn', 'Lysa', 'Edmure')
+tukid <- c('Sansa', 'Arya', 'Rickon', 'Robb', 'Bran', 'Robin')
+tumar <- c('Ned', 'Petyr')
+nodes_subb[nodes_subb$Label %in% tully_mems, 'tully'] <- 1
+nodes_subb[nodes_subb$Label %in% tully_mems, 'house'] <- 'brown'
+nodes_subb[nodes_subb$Label %in% tukid, 'tully'] <- 2
+nodes_subb[nodes_subb$Label %in% tumar, 'tully'] <- 3
+
+nodes_subb$mormont <- rep(0, 100)
+mor_mems <- c('Jeor', 'Jorah', 'Lyanna Mormont')
+nodes_subb[nodes_subb$Label %in% mor_mems, 'mormont'] <- 1
+nodes_subb[nodes_subb$Label %in% mor_mems, 'house'] <- 'pink'
+
+nodes_subb$bolton <- rep(0, 100)
+bol_mems <- c('Ramsey', 'Roose')
+bomar <- c('Sansa')
+nodes_subb[nodes_subb$Label %in% bol_mems, 'bolton'] <- 1
+nodes_subb[nodes_subb$Label %in% bol_mems, 'house'] <- 'brown4'
+nodes_subb[nodes_subb$Label %in% bomar, 'bolton'] <- 3
+
+nodes_subb$martell <- rep(0, 100)
+mar_mems <- c('Oberyn', 'Tyene')
+mmar <- c('Ellaria')
+nodes_subb[nodes_subb$Label %in% mar_mems, 'martell'] <- 1
+nodes_subb[nodes_subb$Label %in% mar_mems, 'house'] <- 'darkgoldenrod'
+nodes_subb[nodes_subb$Label %in% mmar, 'martell'] <- 3
+
+nodes_subb$house <- nodes_subb$house %>% replace_na('bisque1') 
+```
+
+```{r, results='hide'}
+df_sub <- edges_df
+df_sub <- df_sub[df_sub$Source %in% nodes_subb$Id, ]
+df_sub <- df_sub[df_sub$Target %in% nodes_subb$Id, ]
+```
+
+```{r}
+library(igraph)
+
+nodes1 <- nodes_subb$Id
+gnet1 <- graph_from_data_frame(df_sub[, 1:2], vertices = nodes1, directed = FALSE)
+
+deg3 <- degree(gnet1)
+str3 <- strength(gnet1, weights = df_sub$weight)
+btwn3 <- betweenness(gnet1, weights = df_sub$weight)
+close3 <- closeness(gnet1, weights = df_sub$weight)
+eigen3 <- eigen_centrality(gnet1, weights = df_sub$weight)$vector
+
+(var(deg3))
+(var(str3))
+(var(btwn3))
+(var(close3))
+(var(eigen3))
+```
+
+```{r}
+(mean(deg3))
+(sd(deg3))
+hist(deg3)
+```
+
+```{r fig2, fig.height = 4, fig.width = 4, fig.align = 'center'}
+E(gnet1)$weight <- df_sub$weight
+V(gnet1)$size <- str3/2
+V(gnet1)$color <- nodes_subb$house
+
+plot(gnet1, layout = layout.random,
+     vertex.color = V(gnet1)$color,
+     vertex.size = V(gnet1)$size,
+     vertex.label.cex = 0.75,
+     vertex.size = 3,
+     vertex.label.color = 'black',
+     edge.width = E(gnet1)$weight,
+     asp = 0)
+```
+
+```{r, results='hide'}
+detach('package:igraph', unload = TRUE)
+```
+
+```{r}
+pnet1 <- as.network(df_sub[, 1:3],
+                 matrix.type = 'edgelist',
+                 directed = FALSE,
+                 ignore.eval = FALSE,
+                 names.eval = 'weight')
+```
+
+```{r}
+(gden(pnet1, mode = 'graph', ignore.eval = FALSE))
+(centralization(pnet1, degree, mode = 'graph'))
+(triad.census(pnet1, mode = 'graph'))
+(gtrans(pnet1, mode = 'graph', measure = 'weak', use.adjacency = TRUE))
+```
+
+\section{4a)}
+```{r, results='hide'}
+covdata <- nodes_subb[, 4:17]
+nodecov <- list(Dead = covdata[, 1], sex = covdata[, 2], lannister = covdata[, 3], house = covdata[, 4], targaryen = covdata[, 5], stark = covdata[, 6], baratheon = covdata[, 7], tyrell = covdata[, 8], arryn = covdata[, 9], greyjoy = covdata[, 10], tully = covdata[, 11], mormont = covdata[, 12], bolton = covdata[, 13], martell = covdata[, 14])
+```
+
+```{r, results='hide'}
+nodes1 <- nodes_subb$Id
+gnet2 <- network(df_sub[, 1:2], vertices = nodes1, directed = FALSE, vertex.attr = nodecov[1:14], vertex.attrnames = colnames(covdata))
+```
+
+```{r}
+model1 <- ergmm(gnet2 ~ edges + nodecov('lannister') + nodecov('targaryen') + nodecov('stark') + nodecov('baratheon') + nodecov('tyrell') + nodecov('arryn') + nodecov('greyjoy') + nodecov('tully') + nodecov('mormont') + nodecov('bolton') + nodecov('martell'))
+summary(model1)
+```
+
+```{r fig.height = 4, fig.width = 4, fig.align = 'center', message=FALSE}
+model1_gof <- gof(model1, GOF = ~ c(degree, distance), control = control.gof.formula(nsim = 100), verbose = T)
+(model1_gof)
+plot(model1_gof)
+```
+
+```{r, results='hide'}
+#mcmc.diagnostics(model1)
+```
+Chain 1 
+Lag 0 
+                 lpY      beta.1       beta.2      beta.3       beta.4       beta.5       beta.6       beta.7      beta.8
+lpY      1.000000000  0.03509861 -0.002896724 -0.02026923 -0.007494639  0.048258569  0.020939973 -0.008996874 -0.03339938
+beta.1   0.035098612  1.00000000 -0.174031037 -0.27182522 -0.270225636 -0.147814464 -0.208379189 -0.108163852 -0.30465489
+beta.2  -0.002896724 -0.17403104  1.000000000  0.07291456 -0.048662741 -0.516674927 -0.131223591  0.021942514  0.02735275
+beta.3  -0.020269234 -0.27182522  0.072914562  1.00000000 -0.035868054 -0.033040390  0.033314187  0.055836678  0.07220770
+beta.4  -0.007494639 -0.27022564 -0.048662741 -0.03586805  1.000000000  0.052173492  0.060742562  0.263865789  0.08598837
+beta.5   0.048258569 -0.14781446 -0.516674927 -0.03304039  0.052173492  1.000000000 -0.146605313  0.004400144  0.03657326
+beta.6   0.020939973 -0.20837919 -0.131223591  0.03331419  0.060742562 -0.146605313  1.000000000  0.024059101  0.04476724
+beta.7  -0.008996874 -0.10816385  0.021942514  0.05583668  0.263865789  0.004400144  0.024059101  1.000000000  0.03310605
+beta.8  -0.033399380 -0.30465489  0.027352747  0.07220770  0.085988375  0.036573260  0.044767236  0.033106053  1.00000000
+beta.9  -0.020088697 -0.20374071  0.018608046  0.04570717 -0.341287851  0.034967620  0.007795883 -0.577790712  0.03382703
+beta.10  0.007827364 -0.24475947  0.020138023  0.06125715  0.066450944  0.042535197  0.011445984 -0.001472729  0.06340558
+beta.11  0.021784463  0.02410319 -0.377645814 -0.06609476  0.035527190  0.180720316  0.053238876  0.167493777 -0.03904548
+beta.12 -0.032270596 -0.22301726  0.028882938  0.03666473  0.036292571  0.046530829  0.017469490  0.043435469  0.06024210
+              beta.9      beta.10      beta.11      beta.12
+lpY     -0.020088697  0.007827364  0.021784463 -0.032270596
+beta.1  -0.203740706 -0.244759467  0.024103194 -0.223017260
+beta.2   0.018608046  0.020138023 -0.377645814  0.028882938
+beta.3   0.045707166  0.061257149 -0.066094761  0.036664733
+beta.4  -0.341287851  0.066450944  0.035527190  0.036292571
+beta.5   0.034967620  0.042535197  0.180720316  0.046530829
+beta.6   0.007795883  0.011445984  0.053238876  0.017469490
+beta.7  -0.577790712 -0.001472729  0.167493777  0.043435469
+beta.8   0.033827025  0.063405582 -0.039045478  0.060242101
+beta.9   1.000000000  0.017495661 -0.250238133  0.043078246
+beta.10  0.017495661  1.000000000  0.017016315  0.048901386
+beta.11 -0.250238133  0.017016315  1.000000000 -0.008485722
+beta.12  0.043078246  0.048901386 -0.008485722  1.000000000
+
+Lag 10 
+                  lpY      beta.1        beta.2       beta.3       beta.4      beta.5       beta.6       beta.7       beta.8
+lpY      0.7072798502  0.02011194  0.0007892223 -0.026559377  0.003675086  0.04863217  0.031147209 -0.025216259 -0.018104899
+beta.1   0.0397033746  0.53070361 -0.1011863535 -0.150007139 -0.205418180 -0.10986740 -0.046191181 -0.067800135 -0.175025256
+beta.2  -0.0024406940 -0.12224692  0.7169089897  0.097639944 -0.034400073 -0.35965104 -0.081798216  0.011929491  0.014939266
+beta.3  -0.0170671760 -0.16543521  0.0828277787  0.796368174 -0.001307246 -0.03168141 -0.023657230  0.053336482  0.033945627
+beta.4   0.0052148467 -0.19881859 -0.0111345349 -0.046792315  0.692490469  0.04455564  0.049071726  0.171645729  0.060940527
+beta.5   0.0479717820 -0.09156124 -0.3692292463 -0.065680746  0.061475055  0.70177419 -0.074731848  0.034804827  0.024308147
+beta.6   0.0147674002 -0.01648507 -0.1212752977 -0.009984857  0.060860374 -0.08309609  0.399900847  0.008135909  0.007696193
+beta.7   0.0056595677 -0.07199366  0.0411265200  0.033609370  0.185985291  0.02631012  0.011348944  0.749819436  0.032716304
+beta.8  -0.0234912020 -0.18290128  0.0316411327  0.034668880  0.047675173  0.02247681  0.022123962  0.021917194  0.637294096
+beta.9  -0.0251608346 -0.09167669 -0.0346171455  0.009527045 -0.192122246  0.02735043 -0.044507539 -0.383783410  0.018706433
+beta.10 -0.0002311235 -0.21394761  0.0376087097  0.015036291  0.053299629  0.04192694  0.004828716  0.001091106  0.116179061
+beta.11  0.0083949355  0.02024120 -0.2750816683 -0.076148417  0.042533956  0.14386726  0.010855448  0.117434898 -0.042124682
+beta.12 -0.0083745958 -0.09983113  0.0148958149  0.007946289 -0.018572722  0.05869586 -0.076062665  0.009348204  0.086988635
+               beta.9      beta.10       beta.11      beta.12
+lpY     -0.0157123103 -0.005721428  0.0175869845 -0.027673476
+beta.1  -0.1106270533 -0.204271720  0.0185387739 -0.096889315
+beta.2   0.0244856780  0.033870377 -0.2760806810  0.042087248
+beta.3  -0.0089673568  0.014442005 -0.0607018340  0.002808598
+beta.4  -0.1911851229  0.032955284  0.0390504930 -0.022888257
+beta.5   0.0007270967  0.057167608  0.1591628439  0.051181394
+beta.6  -0.0555554349  0.015679911  0.0130471678 -0.047994851
+beta.7  -0.3726515324 -0.019832787  0.1032559709 -0.018721698
+beta.8   0.0418767894  0.082716400 -0.0756020240  0.069058736
+beta.9   0.5256900288  0.070301758 -0.1493455259  0.057132101
+beta.10  0.0382493157  0.697963749  0.0008117536  0.044609345
+beta.11 -0.1788124960 -0.013448456  0.7452466394 -0.006660150
+beta.12  0.0589995708  0.061063006  0.0061135775  0.365978954
+
+[[1]]
+
+Quantile (q) = 0.025
+Accuracy (r) = +/- 0.0125
+Probability (s) = 0.95 
+                                               
+         Burn-in  Total Lower bound  Dependence
+         (M)      (N)   (Nmin)       factor (I)
+ lpY     80       13570 600          22.6      
+ beta.1  50       9860  600          16.4      
+ beta.2  80       14240 600          23.7      
+ beta.3  80       14240 600          23.7      
+ beta.4  120      21540 600          35.9      
+ beta.5  80       13250 600          22.1      
+ beta.6  50       10070 600          16.8      
+ beta.7  100      16920 600          28.2      
+ beta.8  80       16800 600          28.0      
+ beta.9  60       14100 600          23.5      
+ beta.10 70       12630 600          21.0      
+ beta.11 100      16660 600          27.8      
+ beta.12 40       7800  600          13.0      
+
+```{r, results='hide'}
+nodecov$blan <- ifelse(nodecov$lannister >= 1, 1, 0)
+nodecov$btar <- ifelse(nodecov$targaryen >= 1, 1, 0)
+nodecov$bstar <- ifelse(nodecov$stark >= 1, 1, 0)
+nodecov$bbar <- ifelse(nodecov$baratheon >= 1, 1, 0)
+nodecov$btyr <- ifelse(nodecov$tyrell >= 1, 1, 0)
+nodecov$barr <- ifelse(nodecov$arryn >= 1, 1, 0)
+nodecov$bgrey <- ifelse(nodecov$greyjoy >= 1, 1, 0)
+nodecov$btul <- ifelse(nodecov$tully >= 1, 1, 0)
+nodecov$bmor <- ifelse(nodecov$mormont >= 1, 1, 0)
+nodecov$bbol <- ifelse(nodecov$bolton >= 1, 1, 0)
+nodecov$bmar <- ifelse(nodecov$martell >= 1, 1, 0)
+nodecov$bsex <- nodecov$sex
+
+gnet3 <- network(df_sub[, 1:2], vertices = nodes1, directed = FALSE, vertex.attr = nodecov[15:26], vertex.attrnames = c('blan', 'btar', 'bstar', 'bbar', 'btyr', 'barr', 'bgrey', 'btul', 'bmor', 'bbol', 'bmar', 'sex' ))
+```
+
+```{r}
+model2 <- ergmm(gnet3 ~ edges + nodecov('blan') + nodecov('btar') + nodecov('bstar') + nodecov('bbar') + nodecov('btyr') + nodecov('barr') + nodecov('bgrey') + nodecov('btul') + nodecov('bmor') + nodecov('bbol') + nodecov('bmar'))
+
+summary(model2)
+```
+
+```{r fig.height = 4, fig.width = 4, fig.align = 'center', message=FALSE}
+model2_gof <- gof(model2, GOF = ~ c(degree, distance), control = control.gof.formula(nsim = 100), verbose = T)
+(model2_gof)
+plot(model2_gof)
+```
+
+```{r, results='hide'}
+#mcmc.diagnostics(model2)
+```
+Chain 1 
+Lag 0 
+                 lpY       beta.1       beta.2      beta.3       beta.4       beta.5       beta.6       beta.7       beta.8
+lpY      1.000000000  0.004841970 -0.003701243 -0.07676081  0.005014860 -0.068515037  0.046111662 -0.002753561  0.015567137
+beta.1   0.004841970  1.000000000 -0.159251062 -0.34442227 -0.135981358 -0.172549513 -0.221081874 -0.093399173 -0.314065972
+beta.2  -0.003701243 -0.159251062  1.000000000  0.04897044 -0.124167682 -0.539089529 -0.008293759 -0.043341761  0.045165723
+beta.3  -0.076760810 -0.344422273  0.048970443  1.00000000 -0.207442825  0.040420956  0.041045323 -0.088657413  0.103541421
+beta.4   0.005014860 -0.135981358 -0.124167682 -0.20744282  1.000000000  0.050645636  0.044521632  0.555198592  0.001933211
+beta.5  -0.068515037 -0.172549513 -0.539089529  0.04042096  0.050645636  1.000000000 -0.266764516  0.025036980  0.034043166
+beta.6   0.046111662 -0.221081874 -0.008293759  0.04104532  0.044521632 -0.266764516  1.000000000  0.008480807  0.035684326
+beta.7  -0.002753561 -0.093399173 -0.043341761 -0.08865741  0.555198592  0.025036980  0.008480807  1.000000000  0.021548208
+beta.8   0.015567137 -0.314065972  0.045165723  0.10354142  0.001933211  0.034043166  0.035684326  0.021548208  1.000000000
+beta.9   0.004548420 -0.154177790  0.066378371  0.20321581 -0.717528189  0.019900863  0.017398076 -0.713409635  0.066949671
+beta.10  0.029680896 -0.287587330  0.002531658  0.06361776  0.013080290  0.070849846  0.051183008 -0.024302118  0.051799307
+beta.11  0.011132792  0.003197763 -0.211155153 -0.03952573 -0.006350251  0.134049873  0.022017280  0.058359193 -0.007752978
+beta.12  0.031199589 -0.293532901  0.021444639  0.08341868 -0.003058642  0.008465907  0.060969947  0.018464967  0.082695332
+             beta.9      beta.10      beta.11      beta.12
+lpY      0.00454842  0.029680896  0.011132792  0.031199589
+beta.1  -0.15417779 -0.287587330  0.003197763 -0.293532901
+beta.2   0.06637837  0.002531658 -0.211155153  0.021444639
+beta.3   0.20321581  0.063617763 -0.039525725  0.083418676
+beta.4  -0.71752819  0.013080290 -0.006350251 -0.003058642
+beta.5   0.01990086  0.070849846  0.134049873  0.008465907
+beta.6   0.01739808  0.051183008  0.022017280  0.060969947
+beta.7  -0.71340963 -0.024302118  0.058359193  0.018464967
+beta.8   0.06694967  0.051799307 -0.007752978  0.082695332
+beta.9   1.00000000  0.089209032 -0.133915704  0.065314975
+beta.10  0.08920903  1.000000000 -0.033283555  0.049473707
+beta.11 -0.13391570 -0.033283555  1.000000000  0.016047410
+beta.12  0.06531498  0.049473707  0.016047410  1.000000000
+
+Lag 10 
+                 lpY       beta.1        beta.2      beta.3       beta.4       beta.5      beta.6        beta.7       beta.8
+lpY      0.651214716  0.005811914  0.0060301206 -0.06665700 -0.003973962 -0.075550009  0.04520400 -0.0009717712  0.016740657
+beta.1   0.028255720  0.453003091 -0.0684228375 -0.18752123 -0.100165105 -0.122458967 -0.13905149 -0.0529220600 -0.086161606
+beta.2   0.002763231 -0.091727533  0.7965101921  0.03859868 -0.061626680 -0.438224207 -0.01304464 -0.0058931860  0.017622654
+beta.3  -0.077980063 -0.199847645  0.0224217044  0.74607651 -0.185999780  0.033497730  0.03418118 -0.0605353474  0.035072920
+beta.4   0.015602215 -0.112147245 -0.0659222055 -0.18514211  0.781708884  0.032049317  0.07262053  0.3654182486  0.042842097
+beta.5  -0.072852533 -0.099678311 -0.4292124870  0.02755238  0.016753066  0.740045275 -0.12246672  0.0016956551  0.004583273
+beta.6   0.038741343 -0.122195585 -0.0039623539  0.03032727  0.050866623 -0.146900632  0.44908613  0.0273383728  0.050623751
+beta.7  -0.002924945 -0.065858056 -0.0004513025 -0.06995303  0.385896610 -0.003854676  0.03431010  0.5497158537  0.052067591
+beta.8   0.012522508 -0.085450645  0.0064448690  0.05190060  0.050681282  0.018061137  0.02692326  0.0452735910  0.475563848
+beta.9  -0.002615042 -0.062001947  0.0027070773  0.15675368 -0.542771946  0.046640291 -0.04765133 -0.4566314152 -0.014528015
+beta.10  0.017058928 -0.167648260  0.0226087562  0.02513348  0.009415247  0.047924611  0.06159591  0.0012382874 -0.021871137
+beta.11  0.001201902 -0.040209756 -0.1513286247 -0.01471108 -0.007051779  0.077148311  0.06721537  0.0316555141 -0.051153312
+beta.12  0.037945918 -0.179995102  0.0136378715  0.06285229 -0.028918201  0.015045497  0.01863088  0.0001757116  0.047002280
+             beta.9      beta.10      beta.11       beta.12
+lpY      0.01168262  0.030181151 -0.005469342  0.0325503149
+beta.1  -0.07087780 -0.188814037 -0.050778430 -0.2152729038
+beta.2   0.01678235  0.037598710 -0.170875653  0.0097554447
+beta.3   0.16340521  0.056781710 -0.016078073  0.0648997433
+beta.4  -0.54362868  0.003375293  0.001215629 -0.0063100884
+beta.5   0.03278964  0.023517902  0.098757296  0.0205891159
+beta.6  -0.03795494  0.043815809  0.054077024  0.0174921476
+beta.7  -0.47256593  0.002389782  0.038003561 -0.0005381706
+beta.8  -0.01183412 -0.018821663 -0.057587566  0.0641341367
+beta.9   0.71569627  0.060267889 -0.061250698  0.0576151644
+beta.10  0.05380093  0.623424013 -0.056443543  0.0877301568
+beta.11 -0.04928348 -0.077529255  0.607874248  0.0789294246
+beta.12  0.05710569  0.103917792  0.092035457  0.6004688350
+
+[[1]]
+
+Quantile (q) = 0.025
+Accuracy (r) = +/- 0.0125
+Probability (s) = 0.95 
+                                               
+         Burn-in  Total Lower bound  Dependence
+         (M)      (N)   (Nmin)       factor (I)
+ lpY     100      21000 600          35.0      
+ beta.1  40       7800  600          13.0      
+ beta.2  80       14600 600          24.3      
+ beta.3  80       14600 600          24.3      
+ beta.4  80       14240 600          23.7      
+ beta.5  80       13570 600          22.6      
+ beta.6  40       8480  600          14.1      
+ beta.7  50       9650  600          16.1      
+ beta.8  80       14900 600          24.8      
+ beta.9  80       14180 600          23.6      
+ beta.10 70       12060 600          20.1      
+ beta.11 60       11520 600          19.2      
+ beta.12 80       13250 600          22.1      
+
+Are women more likely to connect to people, are they more likely to connect to other women specifically.
+```{r}
+model3 <- ergmm(gnet3 ~ edges + nodematch('sex', diff = FALSE) + nodecov('blan') + nodecov('btar') + nodecov('bstar') + nodecov('bbar') + nodecov('btyr') + nodecov('barr') + nodecov('bgrey') + nodecov('btul') + nodecov('bmor') + nodecov('bbol') + nodecov('bmar'))
+summary(model3)
+```
+
+```{r fig.height = 4, fig.width = 4, fig.align = 'center', message=FALSE}
+model3_gof <- gof(model3, GOF = ~ c(degree, distance), control = control.gof.formula(nsim = 100), verbose = T)
+(model3_gof)
+plot(model3_gof)
+```
+
+```{r, results='hide'}
+#mcmc.diagnostics(model3)
+```
+Chain 1 
+Lag 0 
+                  lpY      beta.1        beta.2        beta.3        beta.4      beta.5       beta.6       beta.7       beta.8
+lpY      1.0000000000  0.02884424 -0.0417985297  0.0005281698 -0.0041459989 -0.03127554 -0.015885908  0.048862032 -0.033272001
+beta.1   0.0288442440  1.00000000 -0.6712046612 -0.1150188658 -0.2088219152 -0.11198637 -0.222923304 -0.162295298 -0.097638772
+beta.2  -0.0417985297 -0.67120466  1.0000000000 -0.0325947396 -0.0002255248 -0.01602242  0.082882938  0.020005642 -0.007576977
+beta.3   0.0005281698 -0.11501887 -0.0325947396  1.0000000000  0.1220835949 -0.17833780 -0.528050836  0.029707890 -0.051139002
+beta.4  -0.0041459989 -0.20882192 -0.0002255248  0.1220835949  1.0000000000 -0.20174786  0.001099503  0.056307004 -0.085178790
+beta.5  -0.0312755408 -0.11198637 -0.0160224158 -0.1783377981 -0.2017478584  1.00000000  0.156461793 -0.026987968  0.539471403
+beta.6  -0.0158859082 -0.22292330  0.0828829377 -0.5280508362  0.0010995032  0.15646179  1.000000000 -0.251602127  0.064660030
+beta.7   0.0488620323 -0.16229530  0.0200056422  0.0297078905  0.0563070041 -0.02698797 -0.251602127  1.000000000 -0.008548124
+beta.8  -0.0332720013 -0.09763877 -0.0075769767 -0.0511390020 -0.0851787902  0.53947140  0.064660030 -0.008548124  1.000000000
+beta.9  -0.0063125253 -0.28022625  0.0241001954 -0.0074292176  0.1094312797  0.07202511  0.133918938  0.002063931  0.065184013
+beta.10  0.0572389399 -0.13429064  0.0639516286  0.1291888102  0.1871775994 -0.69887660 -0.051686613  0.069690690 -0.705763277
+beta.11  0.0076087169 -0.21818463  0.0205982894  0.0049834421  0.0402378011  0.03687967  0.067192465 -0.014041003  0.046987024
+beta.12  0.0039833375 -0.05312534  0.0119324991 -0.2252378512  0.0056897117  0.02596852  0.102664862  0.001455794  0.136967809
+beta.13 -0.0414479000 -0.26885041  0.1112763774  0.0383617151  0.0377286552 -0.02239125  0.064754853  0.041570801  0.016321480
+              beta.9      beta.10      beta.11      beta.12     beta.13
+lpY     -0.006312525  0.057238940  0.007608717  0.003983338 -0.04144790
+beta.1  -0.280226251 -0.134290642 -0.218184625 -0.053125342 -0.26885041
+beta.2   0.024100195  0.063951629  0.020598289  0.011932499  0.11127638
+beta.3  -0.007429218  0.129188810  0.004983442 -0.225237851  0.03836172
+beta.4   0.109431280  0.187177599  0.040237801  0.005689712  0.03772866
+beta.5   0.072025115 -0.698876601  0.036879667  0.025968522 -0.02239125
+beta.6   0.133918938 -0.051686613  0.067192465  0.102664862  0.06475485
+beta.7   0.002063931  0.069690690 -0.014041003  0.001455794  0.04157080
+beta.8   0.065184013 -0.705763277  0.046987024  0.136967809  0.01632148
+beta.9   1.000000000  0.001689467  0.041515464 -0.034202289  0.08567241
+beta.10  0.001689467  1.000000000  0.017954872 -0.157763732  0.05295690
+beta.11  0.041515464  0.017954872  1.000000000  0.028435661  0.06112644
+beta.12 -0.034202289 -0.157763732  0.028435661  1.000000000 -0.01926311
+beta.13  0.085672408  0.052956899  0.061126440 -0.019263106  1.00000000
+
+Lag 10 
+                  lpY      beta.1       beta.2        beta.3       beta.4        beta.5      beta.6      beta.7        beta.8
+lpY      0.6877214585  0.02265456 -0.040246493  7.680412e-05  0.014422056 -0.0412136335 -0.01264036  0.04325156  0.0009700344
+beta.1   0.0293550339  0.87133944 -0.591017486 -1.104950e-01 -0.149964661 -0.0944480781 -0.20943641 -0.11432884 -0.0699143877
+beta.2  -0.0384936286 -0.57494774  0.808029004  7.756049e-03 -0.007456244 -0.0054895442  0.07523831  0.02735701  0.0093057219
+beta.3   0.0035178826 -0.11213361 -0.005771968  8.367183e-01  0.102393569 -0.1757571748 -0.45914098  0.00515087 -0.0344304497
+beta.4  -0.0160834591 -0.15753203 -0.003000052  1.310008e-01  0.632256649 -0.0492163104 -0.03867682  0.09010756 -0.0237377854
+beta.5  -0.0205176680 -0.10080328 -0.005718977 -1.987447e-01 -0.043766231  0.6599587169  0.17527167 -0.07607020  0.2914199535
+beta.6  -0.0161169064 -0.19388110  0.086727022 -4.717807e-01 -0.040389473  0.1723168140  0.86734069 -0.20889181  0.0834715118
+beta.7   0.0644794237 -0.12773898  0.019412493 -1.474886e-03  0.103804404 -0.0802176756 -0.18382208  0.67664257 -0.1227241692
+beta.8  -0.0175263357 -0.07411023 -0.010525408 -5.934584e-02 -0.033438772  0.3083621308  0.10130812 -0.10691801  0.2652211275
+beta.9  -0.0009886078 -0.25374473  0.036166644 -4.826769e-02  0.086390457  0.0892837201  0.17192606 -0.02782799  0.0394687051
+beta.10  0.0399218734 -0.11339006  0.084082829  1.415609e-01  0.033624263 -0.3916349275 -0.07221386  0.12655947 -0.2520756303
+beta.11  0.0057493954 -0.17923197  0.063354042 -1.269550e-02 -0.009817945  0.0007567698  0.05306506 -0.01336931 -0.0265545615
+beta.12 -0.0035299814 -0.05780300  0.008744552 -1.884709e-01 -0.005599604  0.0260738387  0.07888415  0.03985163  0.1139442046
+beta.13 -0.0306628852 -0.23180916  0.106026699  2.387439e-02  0.047312508 -0.0149309745  0.02529168  0.05072115  0.0344040143
+              beta.9      beta.10     beta.11      beta.12      beta.13
+lpY      0.008110439  0.045326604  0.01829181  0.016328795 -0.027524115
+beta.1  -0.239600170 -0.111871053 -0.17589065 -0.055028758 -0.245438183
+beta.2   0.017692617  0.059962664  0.04849385 -0.007366211  0.125014309
+beta.3  -0.046991778  0.130204063  0.01758764 -0.196971869  0.035023802
+beta.4   0.090128172  0.034129310 -0.03561989 -0.016669632  0.071358468
+beta.5   0.083069260 -0.378906067  0.01490910  0.037419040 -0.007152710
+beta.6   0.148077163 -0.074203760  0.03531941  0.098331728  0.027946362
+beta.7  -0.016422657  0.146401689 -0.01721832  0.040119397  0.062318626
+beta.8   0.042429109 -0.238282251 -0.01462313  0.114551685  0.041747274
+beta.9   0.815814646 -0.027619529  0.05744766 -0.039958146  0.063157083
+beta.10 -0.023197162  0.410701406  0.02516120 -0.119302604 -0.005924339
+beta.11  0.059590146  0.042364996  0.65476234  0.062702664  0.053671580
+beta.12 -0.042072017 -0.127512234  0.05119111  0.881794616 -0.016586946
+beta.13  0.070351619 -0.002295061  0.05615156 -0.004595329  0.740274306
+
+[[1]]
+
+Quantile (q) = 0.025
+Accuracy (r) = +/- 0.0125
+Probability (s) = 0.95 
+                                               
+         Burn-in  Total Lower bound  Dependence
+         (M)      (N)   (Nmin)       factor (I)
+ lpY     80       13690 600          22.8      
+ beta.1  220      39920 600          66.5      
+ beta.2  180      29960 600          49.9      
+ beta.3  160      31060 600          51.8      
+ beta.4  50       9860  600          16.4      
+ beta.5  60       11520 600          19.2      
+ beta.6  160      28400 600          47.3      
+ beta.7  90       14970 600          25.0      
+ beta.8  20       6210  600          10.4      
+ beta.9  100      16940 600          28.2      
+ beta.10 30       7170  600          12.0      
+ beta.11 60       11110 600          18.5      
+ beta.12 180      35130 600          58.6      
+ beta.13 70       12630 600          21.0      
